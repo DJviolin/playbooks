@@ -1,0 +1,71 @@
+# https://manski.net/2016/09/vagrant-multi-machine-tutorial/
+# https://github.com/debops/examples/tree/master/vagrant-multi-machine
+# https://github.com/mitchellh/vagrant/issues/1784
+
+VAGRANTFILE_API_VERSION = "2"
+
+BOX_IMAGE = "debian/stretch64"
+NODE_COUNT = 2
+
+#NETWORK = "10.0.0."
+NETWORK = "192.168.50."
+NETMASK = "255.255.255.0"
+PORT = 8080
+SSL = 4433
+
+GUI = ENV['VAGRANT_VBOX_GUI'] || false
+MEMORY = ENV['VAGRANT_VBOX_MEMORY'] || 1024
+CPUS = ENV['VAGRANT_VBOX_CPUS'] || 1
+CPU_CAP = ENV['VAGRANT_VBOX_CPU_CAP'] || "50"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.provider "virtualbox" do |v|
+    v.gui = GUI # vbox starts in headless mode (default)
+    v.memory = MEMORY
+    v.cpus = CPUS
+    v.customize ["modifyvm", :id, "--cpuexecutioncap", CPU_CAP]
+  end
+
+  # Use the same key for each machine
+  #config.ssh.insert_key = false
+
+  config.vm.define "master" do |subconfig|
+    subconfig.vm.box = BOX_IMAGE
+    subconfig.vm.hostname = "master"
+    subconfig.vm.network :private_network, ip: NETWORK+"10", netmask: NETMASK
+    subconfig.vm.network "forwarded_port", guest: 80, host: PORT
+    subconfig.vm.network "forwarded_port", guest: 443, host: SSL
+    subconfig.vm.provision "shell", inline: <<-SHELL
+      set -e
+      apt update
+      apt full-upgrade -y
+      apt install -y libssl-dev libffi-dev python-dev
+      wget https://bootstrap.pypa.io/get-pip.py
+      python get-pip.py
+      rm -f get-pip.py
+      pip install ansible
+    SHELL
+  end
+
+  (1..NODE_COUNT).each do |i|
+    config.vm.define "node#{i}" do |subconfig|
+      subconfig.vm.box = BOX_IMAGE
+      subconfig.vm.hostname = "node#{i}"
+      subconfig.vm.network :private_network, ip: NETWORK+"#{i + 10}", netmask: NETMASK
+      subconfig.vm.network "forwarded_port", guest: 80, host: "#{PORT+i}"
+      subconfig.vm.network "forwarded_port", guest: 443, host: "#{SSL+i}"
+    end
+  end
+
+  # Run on all machines
+  config.vm.synced_folder ".", "/vagrant", type: "virtualbox"
+
+  config.vm.synced_folder "./.vagrant/machines", "/vagrant-machines", type: "virtualbox",
+    # dmode = directory mode
+    # fmode = file mode
+    mount_options: ["fmode=600"]
+
+  config.vm.provision "shell", inline: <<-SHELL
+    echo "Hello, World!"
+  SHELL
+end
